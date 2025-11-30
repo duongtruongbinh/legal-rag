@@ -1,0 +1,2 @@
+# Legal RAG - Microservices Architecture
+

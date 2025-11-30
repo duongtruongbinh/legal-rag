@@ -1,0 +1,40 @@
+# --- Python & Build ---
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.python-version
+
+# --- Virtual Environments ---
+.venv
+venv/
+env/
+
+# --- Environment Variables ---
+.env
+.env.local
+.env.*.local
+
+# --- Project Data & Storage ---
+qdrant_storage/
+data/docstore/
+data/raw/
+
+# --- Streamlit ---
+.streamlit/secrets.toml
+# Có thể giữ config.toml nếu muốn share cấu hình UI, nếu không thì ignore luôn .streamlit/
+
+# --- Testing & Code Coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# --- IDE & OS System Files ---
+.vscode/
+.idea/
+.cursorignore
+.DS_Store
+Thumbs.db
