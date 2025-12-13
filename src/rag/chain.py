@@ -1,4 +1,4 @@
-"""LLM Generation Chain with conversational context."""
+"""LLM Generation Chain with template-based prompts."""
 from functools import lru_cache
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -11,76 +11,63 @@ from src.core.config import settings
 from src.rag.retriever import get_hybrid_retriever
 
 
-CONTEXTUALIZE_PROMPT = """
-Dựa trên lịch sử trò chuyện và câu hỏi mới nhất của người dùng, hãy tóm tắt lại thành một câu hỏi pháp lý hoàn chỉnh.
-Mục tiêu: Để hệ thống tìm kiếm văn bản luật có thể hiểu được ngữ cảnh.
-Lưu ý:
-- Giữ nguyên các từ khóa quan trọng (tên luật, hành vi, mức phạt...).
-- KHÔNG trả lời câu hỏi.
-"""
-
-QA_SYSTEM_PROMPT = """
-Bạn là "Trợ lý Pháp lý AI" thân thiện và am hiểu pháp luật Việt Nam.
-Nhiệm vụ của bạn là giải đáp thắc mắc pháp lý cho người dùng phổ thông dựa trên thông tin được cung cấp (Context).
-
-HƯỚNG DẪN TRẢ LỜI:
-1.  **Phong cách:** Dùng ngôn ngữ đời thường, dễ hiểu, tránh lạm dụng từ ngữ chuyên môn khô khan. Giọng văn nhẹ nhàng, khách quan nhưng có sự thấu hiểu.
-2.  **Cấu trúc câu trả lời:**
-    * **Kết luận trước:** Trả lời trực tiếp vào câu hỏi (Được/Không, Có/Không, Mức phạt là bao nhiêu...).
-    * **Giải thích:** Diễn giải nội dung quy định một cách mạch lạc.
-    * **Cơ sở pháp lý:** Luôn trích dẫn nguồn để người dùng tin tưởng (Ví dụ: "Chi tiết tại Khoản 1, Điều 5...").
-3.  **Trình bày:** Sử dụng danh sách gạch đầu dòng (bullet points) và **in đậm** các thông tin quan trọng (như số tiền phạt, số năm tù, điều kiện...) để người đọc dễ nắm bắt.
-4.  **Trung thực:** Nếu ngữ cảnh (Context) không có thông tin, hãy nói: "Xin lỗi, hiện tại tôi chưa tìm thấy văn bản quy định cụ thể về vấn đề này trong cơ sở dữ liệu." Đừng cố gắng bịa ra luật.
-
----
-Dưới đây là các văn bản pháp luật liên quan (Context):
-{context}
-"""
+def _load_template(name: str) -> str:
+    """Load prompt template from file."""
+    path = settings.templates_dir / name
+    return path.read_text(encoding="utf-8")
 
 
-def get_llm(temperature: float | None = None) -> ChatGoogleGenerativeAI:
-    """Get configured LLM instance."""
+@lru_cache
+def _get_contextualize_prompt() -> ChatPromptTemplate:
+    """Build contextualize prompt for history-aware retrieval."""
+    system = _load_template("contextualize.jinja")
+    return ChatPromptTemplate.from_messages([
+        ("system", system),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{input}"),
+    ])
+
+
+@lru_cache
+def _get_qa_prompt() -> ChatPromptTemplate:
+    """Build QA prompt with context variable."""
+    system = _load_template("qa_system.jinja")
+    return ChatPromptTemplate.from_messages([
+        ("system", system),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{input}"),
+    ])
+
+
+def _create_llm(temperature: float | None = None, streaming: bool = False) -> ChatGoogleGenerativeAI:
+    """Create LLM instance."""
     return ChatGoogleGenerativeAI(
         model=settings.llm_model,
         temperature=temperature or settings.llm_temperature,
         google_api_key=settings.google_api_key,
         convert_system_message_to_human=True,
+        streaming=streaming,
     )
 
 
-@lru_cache
-def get_rag_chain(temperature: float | None = None) -> Runnable:
-    """
-    Build complete RAG chain with history-aware retrieval.
-    
-    Args:
-        temperature: Optional LLM temperature override.
-    
-    Returns:
-        Configured RAG chain that accepts input and chat_history.
-    """
-    llm = get_llm(temperature)
+def _build_chain(llm: ChatGoogleGenerativeAI) -> Runnable:
+    """Build RAG chain with given LLM."""
     retriever = get_hybrid_retriever()
     
-    # Contextualize prompt for history-aware retrieval
-    contextualize_prompt = ChatPromptTemplate.from_messages([
-        ("system", CONTEXTUALIZE_PROMPT),
-        MessagesPlaceholder("chat_history"),
-        ("human", "{input}"),
-    ])
-    
     history_aware_retriever = create_history_aware_retriever(
-        llm, retriever, contextualize_prompt
+        llm, retriever, _get_contextualize_prompt()
     )
     
-    # QA prompt
-    qa_prompt = ChatPromptTemplate.from_messages([
-        ("system", QA_SYSTEM_PROMPT),
-        MessagesPlaceholder("chat_history"),
-        ("human", "{input}"),
-    ])
+    qa_chain = create_stuff_documents_chain(llm, _get_qa_prompt())
     
-    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
-    
-    return create_retrieval_chain(history_aware_retriever, question_answer_chain)
+    return create_retrieval_chain(history_aware_retriever, qa_chain)
 
+
+def get_rag_chain(temperature: float | None = None) -> Runnable:
+    """Get RAG chain for standard (non-streaming) usage."""
+    return _build_chain(_create_llm(temperature, streaming=False))
+
+
+def get_streaming_rag_chain(temperature: float | None = None) -> Runnable:
+    """Get RAG chain with streaming enabled."""
+    return _build_chain(_create_llm(temperature, streaming=True))

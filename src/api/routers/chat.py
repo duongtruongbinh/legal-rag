@@ -1,128 +1,141 @@
-"""Chat API router."""
+"""Chat API router with streaming support."""
+import json
 import logging
+from typing import AsyncGenerator
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage
 
-from src.api.schemas import ChatRequest, ChatResponse, SourceDocument
-from src.rag.chain import get_rag_chain
-from src.core.vector_db import get_vector_store
+from src.api.schemas import (
+    ChatRequest, ChatResponse, SourceDocument, StreamingChatRequest,
+    extract_article_reference, smart_truncate
+)
+from src.rag.chain import get_rag_chain, get_streaming_rag_chain
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-def convert_history(history: list) -> list[HumanMessage | AIMessage]:
-    """Convert API history format to LangChain messages."""
-    messages = []
-    for msg in history:
-        if msg.role == "user":
-            messages.append(HumanMessage(content=msg.content))
-        else:
-            messages.append(AIMessage(content=msg.content))
-    return messages
-
-
-def _extract_score_from_metadata(metadata: dict) -> float | None:
-    """Extract relevance score from metadata."""
-    score_keys = [
-        "relevance_score",
-        "score",
-        "similarity_score",
-        "distance",
-        "relevance",
+def _convert_history(history: list) -> list[HumanMessage | AIMessage]:
+    """Convert API history to LangChain messages."""
+    return [
+        HumanMessage(content=m.content) if m.role == "user" else AIMessage(content=m.content)
+        for m in history
     ]
-    
-    for key in score_keys:
-        if key in metadata:
-            val = metadata[key]
-            if val is None:
-                continue
-            try:
-                score = float(val)
-                if key == "distance" and score > 1:
-                    return max(0.0, 1.0 / (1.0 + score))
-                return max(0.0, min(1.0, score))
-            except (ValueError, TypeError):
-                continue
-    
-    return None
 
 
-def extract_sources(documents: list, query: str = "") -> list[SourceDocument]:
-    """
-    Extract source information from retrieved documents.
-    
-    Args:
-        documents: List of retrieved documents.
-        query: Optional query string for re-scoring.
-    
-    Returns:
-        List of SourceDocument with extracted metadata.
-    """
-    sources = []
-    vector_store = None
-    
-    if query and any(_extract_score_from_metadata(doc.metadata) is None for doc in documents):
-        try:
-            vector_store = get_vector_store()
-        except Exception as e:
-            logger.warning(f"Could not get vector store for rescoring: {e}")
+def _extract_sources(documents: list) -> list[SourceDocument]:
+    """Extract unique, well-formatted source documents."""
+    seen, sources = set(), []
     
     for doc in documents:
         meta = doc.metadata
-        score = _extract_score_from_metadata(meta)
+        parent_id = meta.get("parent_id") or meta.get("_id") or ""
         
-        if score is None and vector_store and query:
-            try:
-                similar_docs = vector_store.similarity_search_with_score(query, k=1)
-                if similar_docs:
-                    raw_score = similar_docs[0][1]
-                    score = max(0.0, min(1.0, 1.0 - raw_score)) if raw_score <= 1.0 else 1.0 / (1.0 + raw_score)
-            except Exception:
-                score = 0.5
+        # Deduplicate
+        if parent_id in seen:
+            continue
+        seen.add(parent_id)
         
-        if score is None:
+        # Extract content and article reference
+        content = doc.page_content
+        article_ref = extract_article_reference(content)
+        
+        # Get title - clean it up
+        title = meta.get("title", "")
+        if not title or title == "Unknown":
+            # Try to extract from first line of content
+            first_line = content.split('\n')[0].strip()
+            if len(first_line) < 200:
+                title = first_line
+            else:
+                title = "Văn bản pháp luật"
+        
+        # Get law_id and format nicely
+        law_id = meta.get("law_id", "")
+        if law_id:
+            # Format: "luat-123" -> "Luật 123"
+            law_id = law_id.replace("-", " ").replace("_", " ").title()
+        
+        # Get relevance score (already normalized 0-1 from ViRanker)
+        score = meta.get("relevance_score", 0.5)
+        if isinstance(score, (int, float)):
+            score = max(0.0, min(1.0, float(score)))
+        else:
             score = 0.5
         
         sources.append(SourceDocument(
-            content=doc.page_content[:500],
-            title=meta.get("title") or meta.get("source") or "Unknown",
-            doc_id=meta.get("_id") or meta.get("id") or "",
-            law_id=meta.get("law_id") or "",
-            relevance_score=float(score),
+            content=smart_truncate(content, 400),
+            title=title[:150] if title else "Văn bản pháp luật",
+            article_ref=article_ref,
+            law_id=law_id,
+            relevance_score=score,
         ))
     
+    # Sort by relevance score
+    sources.sort(key=lambda s: s.relevance_score, reverse=True)
     return sources
 
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
-    """
-    Process a legal question with RAG.
-    
-    Args:
-        request: Chat request with query and optional history.
-    
-    Returns:
-        Answer with source documents.
-    """
+    """Process a legal question with RAG."""
     try:
-        chain = get_rag_chain(temperature=request.temperature)
-        chat_history = convert_history(request.history)
-        
-        result = chain.invoke({
+        chain = get_rag_chain(request.temperature)
+        result = await chain.ainvoke({
             "input": request.query,
-            "chat_history": chat_history,
+            "chat_history": _convert_history(request.history),
         })
-        
-        context_docs = result.get("context", [])
-        sources = extract_sources(context_docs, query=request.query)
         
         return ChatResponse(
             answer=result.get("answer", ""),
-            sources=sources,
+            sources=_extract_sources(result.get("context", [])),
         )
-    
     except Exception as e:
+        logger.exception("Chat error")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+async def _stream_response(
+    query: str, chat_history: list, temperature: float | None
+) -> AsyncGenerator[str, None]:
+    """Generate SSE streaming response."""
+    chain = get_streaming_rag_chain(temperature)
+    sources_sent = False
+    
+    async for event in chain.astream_events(
+        {"input": query, "chat_history": chat_history}, version="v2"
+    ):
+        kind = event.get("event")
+        
+        if kind == "on_retriever_end" and not sources_sent:
+            docs = event.get("data", {}).get("output", [])
+            sources = [s.model_dump() for s in _extract_sources(docs)]
+            yield f"data: {json.dumps({'type': 'sources', 'data': sources}, ensure_ascii=False)}\n\n"
+            sources_sent = True
+        
+        if kind == "on_chat_model_stream":
+            chunk = event.get("data", {}).get("chunk")
+            if chunk and getattr(chunk, "content", None):
+                yield f"data: {json.dumps({'type': 'token', 'data': chunk.content}, ensure_ascii=False)}\n\n"
+    
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+
+@router.post("/stream")
+async def chat_stream(request: StreamingChatRequest) -> StreamingResponse:
+    """Stream legal question response with SSE."""
+    try:
+        return StreamingResponse(
+            _stream_response(
+                request.query,
+                _convert_history(request.history),
+                request.temperature,
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+    except Exception as e:
+        logger.exception("Streaming error")
+        raise HTTPException(status_code=500, detail=str(e))

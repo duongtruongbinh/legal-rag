@@ -1,7 +1,7 @@
 [project]
 name = "legal-rag"
-version = "0.2.0"
-description = "Legal RAG Microservices - Vietnamese Legal Assistant"
+version = "0.3.0"
+description = "Legal RAG Microservices - Vietnamese Legal Assistant with Hybrid Search & Reranking"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -12,6 +12,9 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "python-dotenv>=1.0.0",
     "httpx>=0.28.0",
+    
+    # Template Engine
+    "jinja2>=3.1.0",
     
     # LangChain Ecosystem
     "langchain>=0.3.0,<0.4.0",
@@ -26,12 +29,17 @@ dependencies = [
     "fastembed>=0.4.0",
     
     # ML & Data Processing
+    "transformers>=4.40.0",
     "sentence-transformers>=3.0.0",
     "datasets>=3.0.0",
     "accelerate>=1.0.0",
+    "torch>=2.0.0",
     
     # Frontend
     "streamlit>=1.40.0",
+    
+    # Async Support
+    "aiofiles>=24.0.0",
 ]
 
 [project.scripts]

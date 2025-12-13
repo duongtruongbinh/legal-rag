@@ -1,4 +1,4 @@
-# ⚖️ VN Legal RAG - Vietnamese Legal AI Assistant
+# ⚖️ VN Legal RAG - Vietnam AI Legal Assistant
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com/)
@@ -6,180 +6,258 @@
 [![Qdrant](https://img.shields.io/badge/Qdrant-VectorDB-932259.svg)](https://qdrant.tech/)
 [![LangChain](https://img.shields.io/badge/LangChain-0.3-1C3C3C.svg)](https://langchain.com/)
 
-A specialized Retrieval-Augmented Generation (RAG) system designed for Vietnamese legal document retrieval and question answering. This project utilizes a **Hybrid Search** strategy (Dense + Sparse embeddings) and **Parent-Child Document Retrieval** to provide accurate, context-aware legal advice powered by Google Gemini.
+A production-ready Retrieval-Augmented Generation (RAG) system built specifically for Vietnamese legal retrieval and question answering. The project implements **Hybrid Search** (Dense + Sparse), **Vietnamese Legal Text Splitting**, **Cross-Encoder Reranking with ViRanker**, and **Streaming Response**.
 
-## 🌟 Key Features
+## Key Features
 
-* **Hybrid Search Architecture**: Combines the semantic understanding of dense embeddings with the keyword precision of sparse vectors (BM25).
-    * *Dense*: `GreenNode/GreenNode-Embedding-Large-VN-Mixed-V1`
-    * *Sparse*: `Qdrant/bm25` (via FastEmbed)
-* **Parent-Child Retrieval**: Splits documents into small chunks for precise vector search (Child) while retrieving the full context (Parent) for the LLM generation. Includes a custom `ScorePreservingRetriever` to maintain ranking quality.
-* **Vietnamese Optimized**: Specifically tuned for the Vietnamese language and legal terminology using the Zalo AI corpus.
-* **Microservices Architecture**: 
-    * **Backend**: Async FastAPI server handling ingestion and chat logic.
-    * **Frontend**: Interactive Streamlit UI for easy user interaction.
-* **Conversational Memory**: Maintains context across multiple turns of conversation.
-* **Parallel Ingestion**: Multi-threaded pipeline to process and index legal documents efficiently.
+### Advanced Retrieval Pipeline
 
-## 🏗️ Architecture
+* **Hybrid Search**: Combines dense embeddings (semantic) + sparse vectors (BM25)
 
-The system follows a client-server pattern utilizing Qdrant as the vector knowledge base.
+  * *Dense*: `GreenNode/GreenNode-Embedding-Large-VN-Mixed-V1` (1024-dim)
+  * *Sparse*: `Qdrant/bm25` (FastEmbed)
+* **Cross-Encoder Reranking**: Uses `namdp-ptit/ViRanker` - a reranking model optimized for Vietnamese
+* **Two-Stage Retrieval**: Top-30 candidates → ViRanker → Top-5 documents
+
+### Vietnamese Legal Text Processing
+
+* **Vietnamese Legal Text Splitter**: Regex-based splitter following the structure:
+
+  * **Chương** (Chapter) - context header
+  * **Điều** (Article) - primary boundary
+  * **Khoản** (Clause) - secondary split
+* **Parent-Child Strategy**: Child chunks for search, parent documents for the LLM
+* **Unified Storage**: Store parent content in Qdrant payload
+
+### Performance
+
+* **True Async**: `AsyncQdrantClient` for non-blocking FastAPI
+* **Streaming Response**: Server-Sent Events (SSE) token-by-token
+* **Parallel Ingestion**: Multi-threaded document processing
+
+## System Architecture
 
 ```mermaid
-graph TD
-    User[User] -->|HTTP| FE[Streamlit Frontend]
-    FE -->|JSON| API[FastAPI Backend]
-    
-    subgraph "RAG Pipeline"
-        API --> Chain[LangChain RAG]
-        Chain -->|1. Contextualize| LLM[Google Gemini]
-        Chain -->|2. Hybrid Search| Qdrant[(Qdrant Vector DB)]
-        Qdrant -->|Dense + Sparse| Retriever[Score Preserving Retriever]
-        Retriever -->|3. Fetch Parent Docs| DocStore[[Local DocStore]]
-        DocStore -->|4. Context| LLM
+graph TB
+    subgraph Frontend
+        User[👤 User]
+        UI[🖥️ Streamlit]
     end
-    
-    LLM -->|5. Answer| API
-````
 
-## 🛠️ Tech Stack
+    subgraph Backend
+        API[⚡ FastAPI]
+        Stream[📡 SSE Stream]
+    end
 
-  - **LLM**: Google Gemini 2.5 Flash Lite
-  - **Orchestration**: LangChain
-  - **Vector Database**: Qdrant (Hybrid mode enabled)
-  - **Backend**: FastAPI, Uvicorn
-  - **Frontend**: Streamlit
-  - **Package Management**: `uv` (Astral)
-  - **Data**: [GreenNode/zalo-ai-legal-text-retrieval-vn](https://huggingface.co/datasets/GreenNode/zalo-ai-legal-text-retrieval-vn)
+    subgraph RAG["RAG Pipeline"]
+        subgraph Retrieval
+            Embed[🔢 Embeddings]
+            Search[🔍 Hybrid Search]
+            QD[(Qdrant)]
+        end
+        
+        subgraph Rerank
+            VR[🎯 ViRanker]
+        end
+        
+        subgraph Generate
+            CTX[📄 Context]
+            LLM[🤖 Gemini]
+        end
+    end
 
-## 🚀 Getting Started
+    User --> UI --> API
+    API --> Embed --> Search --> QD
+    QD --> VR --> CTX --> LLM
+    LLM --> Stream --> UI --> User
 
-### Prerequisites
-
-  - Python 3.10 or higher
-  - [uv](https://github.com/astral-sh/uv) installed (recommended) or pip
-  - Docker (for running Qdrant local)
-  - Google API Key (for Gemini)
-
-### 1\. Installation
-
-Clone the repository:
-
-```bash
-git clone [https://github.com/duongtruongbinh/legal-rag.git](https://github.com/duongtruongbinh/legal-rag.git)
-cd legal-rag
+    style VR fill:#4CAF50,color:#fff
+    style QD fill:#932259,color:#fff
+    style LLM fill:#4285F4,color:#fff
 ```
 
-Install dependencies using `uv`:
+## Processing Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as FastAPI
+    participant Q as Qdrant
+    participant R as ViRanker
+    participant L as Gemini
+
+    U->>A: POST /chat
+    
+    rect rgb(240, 248, 255)
+        Note over A,Q: Stage 1: Hybrid Search
+        A->>Q: Dense + Sparse (k=30)
+        Q-->>A: 30 candidates
+    end
+    
+    rect rgb(240, 255, 240)
+        Note over A,R: Stage 2: Reranking
+        A->>R: Rerank candidates
+        R-->>A: Scored docs (sigmoid normalized)
+        A->>A: Deduplicate → Top-5
+    end
+    
+    rect rgb(255, 248, 240)
+        Note over A,L: Stage 3: Generation
+        A->>L: Context + Query
+        L-->>A: Streaming tokens
+    end
+    
+    A-->>U: SSE Response
+```
+
+## Tech Stack
+
+| Component            | Technology                              |
+| -------------------- | --------------------------------------- |
+| **LLM**              | Google Gemini 2.5 Flash Lite            |
+| **Dense Embedding**  | GreenNode-Embedding-Large-VN (1024-dim) |
+| **Sparse Embedding** | Qdrant/BM25 (FastEmbed)                 |
+| **Reranker**         | namdp-ptit/ViRanker                     |
+| **Vector DB**        | Qdrant (Hybrid mode)                    |
+| **Backend**          | FastAPI + Uvicorn                       |
+| **Frontend**         | Streamlit                               |
+| **Orchestration**    | LangChain 0.3                           |
+
+## Installation
+
+### Requirements
+
+* Python 3.10+
+* [uv](https://github.com/astral-sh/uv) (recommended) or pip
+* Docker (for Qdrant)
+* NVIDIA GPU + CUDA (recommended)
+* Google API Key
+
+### 1. Clone & Install
 
 ```bash
+git clone https://github.com/duongtruongbinh/legal-rag.git
+cd legal-rag
 uv sync
 ```
 
-### 2\. Configuration
+### 2. Configuration
 
-Create a `.env` file in the root directory:
+Create a `.env` file:
 
 ```ini
-# .env
-GOOGLE_API_KEY=your_google_api_key_here
+GOOGLE_API_KEY=your_api_key_here
 
-# Qdrant (Local Docker or Cloud)
+# Qdrant
 QDRANT_URL=http://localhost:6333
-QDRANT_COLLECTION=legal_hybrid_v2
+QDRANT_COLLECTION=legal_hybrid_v3
 
-# Model Settings
-LLM_MODEL=gemini-2.5-flash-lite
-LLM_TEMPERATURE=0.1
-EMBEDDING_DEVICE=cuda  # Use 'cpu' if you don't have a GPU
+# Models
+EMBEDDING_DEVICE=cuda
+RERANKER_DEVICE=cuda
+
+# Retrieval
+RETRIEVAL_TOP_K=30
+RERANKER_TOP_N=5
 ```
 
-### 3\. Start Infrastructure
-
-Start Qdrant using Docker:
+### 3. Start Qdrant
 
 ```bash
-docker run -p 6333:6333 \
-    -v $(pwd)/qdrant_storage:/qdrant/storage \
-    qdrant/qdrant
+docker run -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
 ```
 
-### 4\. Run the Application
-
-**Step 1: Start the Backend API**
+### 4. Run the Application
 
 ```bash
+# Backend
 uvicorn src.api.server:app --reload --port 8000
-```
 
-*The API will be available at `http://localhost:8000`.*
-
-**Step 2: Start the Frontend UI**
-Open a new terminal:
-
-```bash
+# Frontend (new terminal)
 streamlit run frontend/ui.py
 ```
 
-*The UI will open at `http://localhost:8501`.*
-
-## 📚 Data Ingestion
-
-Before asking questions, you need to populate the vector database with legal documents.
-
-**Option 1: Via UI**
-
-1.  Go to the Streamlit interface.
-2.  (Optional) Implement an ingestion button in the sidebar (or use the API directly).
-
-**Option 2: Via API (Recommended)**
-Trigger the ingestion process using `curl` or Postman:
+## Data Ingestion
 
 ```bash
+# Via API
 curl -X POST http://localhost:8000/ingest \
   -H "Content-Type: application/json" \
-  -d '{"batch_size": 100, "collection_name": "legal_hybrid_v2"}'
-```
+  -d '{"batch_size": 100, "max_workers": 8}'
 
-**Option 3: Via Python Script**
-Directly run the ingestion module:
-
-```bash
+# Via Python
 python -m src.rag.ingestion
 ```
 
-## 🔌 API Endpoints
+## API Endpoints
 
-Documentation is available at `http://localhost:8000/docs`.
+| Method | Endpoint         | Description               |
+| ------ | ---------------- | ------------------------- |
+| `GET`  | `/health`        | Health check              |
+| `POST` | `/chat`          | RAG query (full response) |
+| `POST` | `/chat/stream`   | RAG query (SSE streaming) |
+| `POST` | `/ingest`        | Trigger ingestion         |
+| `GET`  | `/ingest/status` | Ingestion status          |
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Check API health status |
-| `POST` | `/chat` | Send a query to the RAG system |
-| `POST` | `/ingest` | Trigger background document ingestion |
-| `GET` | `/ingest/status` | Check progress of ingestion |
+### Streaming Example
 
-## 📂 Project Structure
+```bash
+curl -X POST http://localhost:8000/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Mức phạt vượt đèn đỏ?"}' \
+  --no-buffer
+```
+
+Response (SSE):
+
+```
+data: {"type": "sources", "data": [...]}
+data: {"type": "token", "data": "Theo"}
+data: {"type": "token", "data": " quy định"}
+...
+data: {"type": "done"}
+```
+
+## Project Structure
 
 ```
 legal-rag/
 ├── src/
-│   ├── api/              # FastAPI app & routers
-│   ├── core/             # Configuration & DB connections
-│   └── rag/              # Main RAG logic
-│       ├── chain.py      # LLM Chain definition
-│       ├── retriever.py  # Custom Hybrid Retriever
-│       └── ingestion.py  # Data processing pipeline
+│   ├── api/
+│   │   ├── routers/
+│   │   │   ├── chat.py          # Chat endpoints + streaming
+│   │   │   └── ingest.py        # Ingestion endpoint
+│   │   ├── schemas.py           # Pydantic models
+│   │   └── server.py            # FastAPI app
+│   ├── core/
+│   │   ├── config.py            # Settings
+│   │   └── vector_db.py         # Qdrant connection
+│   ├── rag/
+│   │   ├── chain.py             # LangChain RAG chain
+│   │   ├── retriever.py         # HybridRerankerRetriever + ViRanker
+│   │   └── ingestion.py         # VietnameseLegalTextSplitter
+│   └── templates/
+│       ├── contextualize.jinja  # Query reformulation
+│       └── qa_system.jinja      # System prompt
 ├── frontend/
-│   └── ui.py             # Streamlit application
-├── data/                 # Local storage for parent documents
-├── pyproject.toml        # Dependencies
+│   └── ui.py                    # Streamlit UI
+├── pyproject.toml
 └── README.md
 ```
 
+## Configuration
 
-## 🙏 Acknowledgments
+| Setting             | Default | Description                             |
+| ------------------- | ------- | --------------------------------------- |
+| `RETRIEVAL_TOP_K`   | 30      | Number of candidates from hybrid search |
+| `RERANKER_TOP_N`    | 5       | Number of documents after reranking     |
+| `PARENT_CHUNK_SIZE` | 2000    | Max chars/parent chunk                  |
+| `CHILD_CHUNK_SIZE`  | 512     | Max chars/child chunk                   |
+| `LLM_TEMPERATURE`   | 0.1     | Generation randomness                   |
 
-  - Special thanks to **GreenNode** for the Vietnamese Embedding models and Legal Corpus.
-  - Built with **LangChain** and **Qdrant**.
+## Credits
 
+* **GreenNode** - Vietnamese embedding models & legal corpus
+* **namdp-ptit** - ViRanker Vietnamese reranking model
+* **LangChain** & **Qdrant** - Core infrastructure
+* **Zalo AI** - Original legal text retrieval dataset
