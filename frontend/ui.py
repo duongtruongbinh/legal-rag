@@ -1,230 +1,274 @@
-"""Streamlit frontend - Thin client consuming FastAPI backend."""
+"""Streamlit frontend for Vietnamese Legal RAG Assistant."""
 import httpx
 import streamlit as st
 
 API_BASE_URL = "http://localhost:8000"
 
-st.set_page_config(page_title="Legal Assistant Pro", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Trợ lý Pháp lý AI", page_icon="⚖️", layout="wide")
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=Inter:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap');
     
-    .stApp {
-        background-color: #f8f9fa;
-        color: #1f2937;
-    }
+    * { font-family: 'Be Vietnam Pro', sans-serif; }
+    
+    .stApp { background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); }
     
     .main-title {
-        font-family: 'Crimson Pro', serif;
-        font-size: 3em;
+        font-size: 2.5em;
         font-weight: 700;
-        color: #1e3a8a;
+        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
         text-align: center;
         margin-bottom: 0.2em;
-        letter-spacing: -0.02em;
     }
     
     .subtitle {
-        font-family: 'Inter', sans-serif;
         color: #64748b;
         text-align: center;
-        font-size: 1.1em;
-        margin-bottom: 2.5em;
-        font-weight: 400;
+        font-size: 1em;
+        margin-bottom: 2em;
     }
     
-    .source-card {
-        background: #ffffff;
-        padding: 20px;
-        border-radius: 12px;
-        margin-bottom: 16px;
+    .source-item {
+        background: #fff;
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 10px;
         border: 1px solid #e2e8f0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-        transition: all 0.2s ease;
+        transition: all 0.15s ease;
     }
     
-    .source-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.08);
-        border-color: #cbd5e1;
+    .source-item:hover {
+        border-color: #3b82f6;
+        box-shadow: 0 4px 12px rgba(59,130,246,0.1);
     }
     
-    .score-badge {
-        color: #ffffff;
-        padding: 4px 10px;
+    .source-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+    }
+    
+    .source-num {
+        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+        color: #fff;
+        min-width: 24px;
+        height: 24px;
         border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         font-size: 0.75em;
         font-weight: 600;
-        font-family: 'Inter', sans-serif;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-    }
-    
-    .meta-tag {
-        font-size: 0.8em;
-        color: #475569;
-        background: #f1f5f9;
-        padding: 4px 8px;
-        border-radius: 4px;
-        margin-right: 8px;
-        font-family: 'Inter', sans-serif;
-        border: 1px solid #e2e8f0;
-        font-weight: 500;
     }
     
     .source-title {
-        font-family: 'Crimson Pro', serif;
-        font-weight: 700;
-        font-size: 1.15em;
-        color: #0f172a;
-        letter-spacing: -0.01em;
+        font-weight: 600;
+        color: #1e293b;
+        font-size: 0.9em;
+        flex: 1;
+        line-height: 1.3;
     }
     
-    .source-content {
-        font-size: 0.95em;
-        color: #334155;
-        margin-top: 12px;
+    .score-pill {
+        font-size: 0.7em;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 12px;
+        white-space: nowrap;
+    }
+    
+    .score-high { background: #dcfce7; color: #166534; }
+    .score-med { background: #dbeafe; color: #1e40af; }
+    .score-low { background: #fef3c7; color: #92400e; }
+    
+    .source-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 8px;
+    }
+    
+    .meta-chip {
+        font-size: 0.7em;
+        background: #f1f5f9;
+        color: #475569;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-weight: 500;
+    }
+    
+    .source-excerpt {
+        font-size: 0.82em;
+        color: #475569;
         line-height: 1.6;
         background: #f8fafc;
-        padding: 14px;
-        border-radius: 8px;
-        font-family: 'Inter', sans-serif;
-        border-left: 3px solid #94a3b8;
+        padding: 10px 12px;
+        border-radius: 6px;
+        border-left: 3px solid #3b82f6;
+        max-height: 120px;
+        overflow-y: auto;
     }
     
-    .stChatMessage {
-        font-family: 'Inter', sans-serif;
-        background-color: transparent;
-    }
-
+    .stChatMessage { background: transparent; }
+    
     [data-testid="stSidebar"] {
-        background-color: #ffffff;
+        background: #fff;
         border-right: 1px solid #e5e7eb;
     }
     
-    [data-testid="stSidebar"] .stMarkdown {
-        color: #374151;
-    }
-    
     .stButton > button {
-        background-color: #2563eb;
-        color: white;
+        background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+        color: #fff;
         border: none;
         border-radius: 8px;
         font-weight: 500;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-        transition: all 0.2s ease;
+        transition: all 0.2s;
     }
     
     .stButton > button:hover {
-        background-color: #1d4ed8;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(37,99,235,0.3);
     }
     
-    .status-indicator {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
+    .status-dot {
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
-        margin-right: 8px;
+        display: inline-block;
+        margin-right: 6px;
     }
     
-    .status-online {
-        background: #10b981;
-        box-shadow: 0 0 4px #10b981;
-    }
+    .status-on { background: #10b981; box-shadow: 0 0 6px #10b981; }
+    .status-off { background: #ef4444; }
     
-    .status-offline {
-        background: #ef4444;
-        box-shadow: 0 0 4px #ef4444;
-    }
+    details summary { cursor: pointer; }
     
-    hr {
-        margin: 1.5em 0;
-        border-color: #e2e8f0;
+    .sources-container {
+        max-height: 400px;
+        overflow-y: auto;
+        padding-right: 4px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
-st.markdown('<h1 class="main-title">⚖️ Trợ lý Pháp lý Thông minh</h1>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Hệ thống RAG Hybrid Search • Powered by Gemini & Qdrant</p>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-title">⚖️ Trợ lý Pháp lý AI</h1>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">Hybrid Search + ViRanker Reranking • Powered by Gemini</p>', unsafe_allow_html=True)
 
 
 def check_api_health() -> bool:
-    """Check if backend API is available."""
     try:
-        response = httpx.get(f"{API_BASE_URL}/health", timeout=3.0)
-        return response.status_code == 200
+        return httpx.get(f"{API_BASE_URL}/health", timeout=3.0).status_code == 200
     except Exception:
         return False
 
 
 def send_chat_request(query: str, history: list, temperature: float) -> dict | None:
-    """Send chat request to backend API."""
-    payload = {
-        "query": query,
-        "history": history,
-        "temperature": temperature,
-    }
     try:
         with httpx.Client(timeout=120.0) as client:
-            response = client.post(f"{API_BASE_URL}/chat", json=payload)
-            response.raise_for_status()
-            return response.json()
+            resp = client.post(f"{API_BASE_URL}/chat", json={
+                "query": query, "history": history, "temperature": temperature
+            })
+            resp.raise_for_status()
+            return resp.json()
     except httpx.TimeoutException:
-        st.error("⏱️ Request timed out. Please try again.")
-        return None
+        st.error("⏱️ Timeout - Vui lòng thử lại")
     except httpx.HTTPStatusError as e:
-        st.error(f"❌ API Error: {e.response.status_code}")
-        return None
+        st.error(f"❌ Lỗi API: {e.response.status_code}")
     except Exception as e:
-        st.error(f"❌ Connection Error: {str(e)}")
-        return None
+        st.error(f"❌ Lỗi kết nối: {e}")
+    return None
 
 
+def render_sources(sources: list) -> None:
+    """Render compact source cards."""
+    st.markdown('<div class="sources-container">', unsafe_allow_html=True)
+    
+    for idx, src in enumerate(sources):
+        score = src.get("relevance_score", 0.5)
+        title = src.get("title", "Văn bản pháp luật")[:80]
+        article_ref = src.get("article_ref", "")
+        law_id = src.get("law_id", "")
+        content = src.get("content", "")
+        
+        # Score styling
+        if score >= 0.7:
+            score_class, score_text = "score-high", f"✓ {score*100:.0f}%"
+        elif score >= 0.5:
+            score_class, score_text = "score-med", f"{score*100:.0f}%"
+        else:
+            score_class, score_text = "score-low", f"{score*100:.0f}%"
+        
+        # Build meta chips
+        meta_chips = []
+        if article_ref:
+            meta_chips.append(f'<span class="meta-chip">📌 {article_ref}</span>')
+        if law_id:
+            meta_chips.append(f'<span class="meta-chip">📜 {law_id}</span>')
+        meta_html = "".join(meta_chips)
+        
+        st.markdown(f'''
+        <div class="source-item">
+            <div class="source-header">
+                <span class="source-num">{idx + 1}</span>
+                <span class="source-title">{title}</span>
+                <span class="score-pill {score_class}">{score_text}</span>
+            </div>
+            <div class="source-meta">{meta_html}</div>
+            <div class="source-excerpt">{content}</div>
+        </div>
+        ''', unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# Session state
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "api_history" not in st.session_state:
     st.session_state.api_history = []
 
+# Sidebar
 with st.sidebar:
-    st.header("⚙️ Cấu hình")
+    st.header("⚙️ Cài đặt")
     
     api_online = check_api_health()
-    status_class = "status-online" if api_online else "status-offline"
-    status_text = "Online" if api_online else "Offline"
-    st.markdown(
-        f'<div style="color: #374151; margin-bottom: 10px;"><span class="status-indicator {status_class}"></span>API Status: <b>{status_text}</b></div>',
-        unsafe_allow_html=True,
-    )
+    dot_class = "status-on" if api_online else "status-off"
+    status = "Online" if api_online else "Offline"
+    st.markdown(f'<p><span class="status-dot {dot_class}"></span>API: <b>{status}</b></p>', unsafe_allow_html=True)
     
     st.divider()
-    temperature = st.slider("Độ sáng tạo (Temperature)", 0.0, 1.0, 0.1, 0.05)
+    temperature = st.slider("Temperature", 0.0, 1.0, 0.1, 0.05)
     
     st.divider()
+    st.caption("**Tech Stack**")
     st.markdown("""
-    **🔧 Tech Stack:**
-    - Dense: GreenNode-Large-VN
-    - Sparse: BM25 (FastEmbed)
-    - LLM: Gemini Flash
-    - Search: Hybrid (Dense + Sparse)
+    - 🔢 GreenNode Embedding
+    - 🎯 ViRanker Reranking  
+    - 🤖 Gemini Flash LLM
+    - 🔍 Qdrant Hybrid Search
     """)
     
     st.divider()
-    if st.button("🗑️ Xóa lịch sử chat", use_container_width=True):
+    if st.button("🗑️ Xóa lịch sử", use_container_width=True):
         st.session_state.chat_history = []
         st.session_state.api_history = []
         st.rerun()
 
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# Chat history
+for msg in st.session_state.chat_history:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-if query := st.chat_input("Nhập câu hỏi pháp lý... (Ví dụ: Quy định về nồng độ cồn)"):
+# Chat input
+if query := st.chat_input("Nhập câu hỏi ..."):
     if not api_online:
-        st.error("❌ Backend API is not available. Please start the server first.")
-        st.code("uv run uvicorn src.api.server:app --reload", language="bash")
+        st.error("❌ API chưa sẵn sàng")
+        st.code("uvicorn src.api.server:app --reload", language="bash")
         st.stop()
     
     st.session_state.chat_history.append({"role": "user", "content": query})
@@ -234,12 +278,8 @@ if query := st.chat_input("Nhập câu hỏi pháp lý... (Ví dụ: Quy định
         st.markdown(query)
     
     with st.chat_message("assistant"):
-        with st.spinner("🔍 Đang phân tích văn bản luật..."):
-            response = send_chat_request(
-                query=query,
-                history=st.session_state.api_history,
-                temperature=temperature,
-            )
+        with st.spinner("🔍 Đang tìm kiếm..."):
+            response = send_chat_request(query, st.session_state.api_history, temperature)
         
         if response:
             answer = response.get("answer", "")
@@ -250,37 +290,5 @@ if query := st.chat_input("Nhập câu hỏi pháp lý... (Ví dụ: Quy định
             st.session_state.api_history.append({"role": "assistant", "content": answer})
             
             if sources:
-                with st.expander("📚 Nguồn tham khảo & Minh chứng", expanded=False):
-                    for idx, src in enumerate(sources):
-                        score = src.get("relevance_score") or 0.0
-                        
-                        if score > 0.7:
-                            color = "#059669"
-                            bg_badge = "#059669"
-                        elif score > 0.4:
-                            color = "#d97706"
-                            bg_badge = "#d97706"
-                        else:
-                            color = "#dc2626"
-                            bg_badge = "#dc2626"
-                        
-                        title = src.get("title", "N/A")
-                        doc_id = src.get("doc_id", "N/A")
-                        law_id = src.get("law_id", "N/A")
-                        content = src.get("content", "")
-                        
-                        score_display = f"{score * 100:.1f}%" if score else "N/A"
-                        
-                        st.markdown(f"""
-                        <div class="source-card" style="border-left: 5px solid {color};">
-                            <div style="display: flex; justify-content: space-between; align-items: start;">
-                                <span class="source-title">{idx + 1}. {title}</span>
-                                <span class="score-badge" style="background: {bg_badge};">{score_display}</span>
-                            </div>
-                            <div style="margin: 10px 0;">
-                                <span class="meta-tag">🆔 {doc_id}</span>
-                                <span class="meta-tag">📜 {law_id}</span>
-                            </div>
-                            <div class="source-content">{content}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                with st.expander(f"📚 Nguồn tham khảo ({len(sources)})", expanded=True):
+                    render_sources(sources)

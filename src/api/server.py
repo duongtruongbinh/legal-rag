@@ -21,8 +21,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Legal RAG API",
-    description="Vietnamese Legal Assistant with Hybrid RAG",
-    version="0.2.0",
+    description="Vietnamese Legal Assistant with Hybrid RAG, Reranking & Streaming",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -43,13 +43,13 @@ app.include_router(ingest_router)
 @app.get("/", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Health check endpoint."""
-    return HealthResponse(status="healthy", version="0.2.0")
+    return HealthResponse(status="healthy", version="0.3.0")
 
 
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     """Alias for health check."""
-    return HealthResponse(status="healthy", version="0.2.0")
+    return HealthResponse(status="healthy", version="0.3.0")
 
 
 def main():
